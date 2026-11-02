@@ -1,0 +1,59 @@
+# Cada vez que subís o cambiás algo en packs/, arma el catálogo, lo firma y lo publica en GitHub Pages.
+name: Publicar fondos
+
+on:
+  push:
+    branches: [main]
+    paths: ['packs/**', 'tools/**', '.github/workflows/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # para saber cuándo se agregó cada fondo
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar compresor WebP
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq webp
+
+      - name: Armar catálogo
+        run: java tools/BuildCatalog.java packs site
+
+      - name: Firmar catálogo
+        env:
+          CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}
+        run: |
+          if [ -z "$CATALOG_SIGNING_KEY" ]; then
+            echo "::error::Falta el secreto CATALOG_SIGNING_KEY (ver README)."
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$CATALOG_SIGNING_KEY" > "$RUNNER_TEMP/key.pem"
+          openssl dgst -sha256 -sign "$RUNNER_TEMP/key.pem" -out site/catalog.sig site/catalog.json
+          rm -f "$RUNNER_TEMP/key.pem"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
